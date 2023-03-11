@@ -2,6 +2,7 @@ from glob import glob
 import os
 import torch
 import torch.optim as optim
+from torch.optim.lr_scheduler import CosineAnnealingLR
 from tqdm import tqdm
 from utils import get_fid, interpolate_latent_space, save_plot
 from torchvision import transforms
@@ -24,8 +25,8 @@ def build_transforms():
     # 2. Rescale input image to be between -1 and 1.
     # NOTE: don't do anything fancy for 2, hint: the input image is between 0 and 1.
     ds_transforms = transforms.Compose([
+        transforms.ToTensor(),
         Rescale(),
-        transforms.ToTensor()
     ])
     return ds_transforms
 
@@ -39,8 +40,9 @@ def get_optimizers_and_schedulers(gen, disc):
     # The learning rate for the generator should be decayed to 0 over 100K iterations.
 
     optim_discriminator = optim.Adam(disc.parameters(), lr=0.0002, betas=(0, 0.9))
+    scheduler_discriminator = CosineAnnealingLR(optim_discriminator, T_max=500e+3, eta_min=0)
     optim_generator = optim.Adam(gen.parameters(), lr=0.0002, betas=(0,0.9))
-    scheduler_discriminator = optim.lr_scheduler.
+    scheduler_generator = CosineAnnealingLR(optim_generator, T_max=100e+3, eta_min=0)
     return (
         optim_discriminator,
         scheduler_discriminator,
@@ -77,6 +79,8 @@ def train_model(
     log_period=10000,
     amp_enabled=True,
 ):
+    
+    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     torch.backends.cudnn.benchmark = True # speed up training
     ds_transforms = build_transforms()
     train_loader = torch.utils.data.DataLoader(
@@ -109,27 +113,49 @@ def train_model(
                 # 1. Compute generator output -> the number of samples must match the batch size.
                 # 2. Compute discriminator output on the train batch.
                 # 3. Compute the discriminator output on the generated data.
+                generator_output = gen(train_batch.shape[0])
+                discrim_real = disc(train_batch).reshape(-1)
+                discrim_fake = disc(generator_output).reshape(-1)
+                # print(discrim_real)
+                # print(discrim_fake)
+                # discriminator_loss = disc_loss_fn(discrim_real, discrim_fake)
 
                 # TODO: 1.5 Compute the interpolated batch and run the discriminator on it.
-
+                epsilon = torch.rand((train_batch.shape[0], 1, 1, 1)).to(device)
+                # # print(epsilon.shape)
+                # # print(train_batch.shape)
+                # # print(generator_output.shape)
+                interp = epsilon * train_batch + (1-epsilon) * generator_output
+                discrim_interp = disc(interp).reshape(-1)
+                discriminator_loss = disc_loss_fn(discrim_real, discrim_fake, discrim_interp, interp, lamb)
+            
+            
+            # discriminator_loss = disc_loss_fn(discrim_real, discrim_fake, discrim_interp, interp, lamb)
 
             optim_discriminator.zero_grad(set_to_none=True)
-            scaler.scale(discriminator_loss).backward()
+            scaler.scale(discriminator_loss).backward(retain_graph=True)
             scaler.step(optim_discriminator)
-            scheduler_discriminator.step()
+            # scheduler_discriminator.step()
 
             if iters % 5 == 0:
                 with torch.cuda.amp.autocast(enabled=amp_enabled):
                     # TODO 1.2: compute generator and discriminator output on generated data.
+                    generator_output = gen(train_batch.shape[0])
+                    discrim_fake = disc(generator_output)
+                    generator_loss = gen_loss_fn(discrim_fake)
                 optim_generator.zero_grad(set_to_none=True)
                 scaler.scale(generator_loss).backward()
                 scaler.step(optim_generator)
                 scheduler_generator.step()
+            
+            scheduler_discriminator.step()
 
             if iters % log_period == 0 and iters != 0:
                 with torch.no_grad():
                     with torch.cuda.amp.autocast(enabled=amp_enabled):
                         # TODO 1.2: Generate samples using the generator, make sure they lie in the range [0, 1].
+                        generated_samples = gen(100)
+                        generated_samples = torch.clamp(generated_samples, 0.0, 1.0)
                     save_image(
                         generated_samples.data.float(),
                         prefix + "samples_{}.png".format(iters),
