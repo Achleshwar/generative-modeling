@@ -1,6 +1,7 @@
 import os
 
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from utils import get_args
 
@@ -9,12 +10,16 @@ from train import train_model
 
 
 def compute_discriminator_loss(
-    discrim_real, discrim_fake, discrim_interp, interp, lamb
+    discrim_real, discrim_fake, discrim_interp=None, interp=None, lamb=None
 ):
     """
     TODO 1.4.1: Implement LSGAN loss for discriminator.
     Do not use discrim_interp, interp, lamb. They are placeholders for Q1.5.
     """
+    criterion = nn.MSELoss()
+    loss_real = criterion(discrim_real, torch.ones_like(discrim_real))
+    loss_fake = criterion(discrim_fake, torch.zeros_like(discrim_fake))
+    loss = (loss_real+loss_fake)/2
     return loss
 
 
@@ -22,6 +27,8 @@ def compute_generator_loss(discrim_fake):
     """
     TODO 1.4.1: Implement LSGAN loss for generator.
     """
+    criterion = nn.MSELoss()
+    loss = criterion(discrim_fake, torch.ones_like(discrim_fake))
     return loss
 
 if __name__ == "__main__":
