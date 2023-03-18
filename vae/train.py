@@ -19,6 +19,10 @@ def ae_loss(model, x):
     TODO 2.2: fill in MSE loss between x and its reconstruction.
     return loss, {recon_loss = loss}
     """
+    z = model.encoder(x)
+    out = model.decoder(z)
+
+    loss = torch.mean(torch.sum((out-x)**2, dim=(1,2,3)), dim=0)
 
     return loss, OrderedDict(recon_loss=loss)
 
@@ -29,6 +33,22 @@ def vae_loss(model, x, beta = 1):
     (https://stats.stackexchange.com/questions/318748/deriving-the-kl-divergence-loss-for-vaes).
     return loss, {recon_loss = loss}
     """
+    mu, log_std = model.encoder(x)
+    sigma = torch.exp(0.5*log_std)
+    #reparameterization
+    epsilon = torch.randn_like(sigma)
+    # print(mu.shape)
+    # print(sigma.shape)
+    z = mu + sigma*epsilon
+    out = model.decoder(z)
+
+    recon_loss = torch.mean(torch.sum((out-x)**2, dim=(1,2,3)), dim=0)
+    kl_loss = 0.5*torch.mean(torch.sum(-1 - log_std + mu**2 + log_std.exp(), dim=1), dim=0)
+    # print("Recon_loss:", recon_loss)
+    # print("KL loss:", kl_loss)
+
+    total_loss = recon_loss + beta*kl_loss
+
     return total_loss, OrderedDict(recon_loss=recon_loss, kl_loss=kl_loss)
 
 
@@ -43,6 +63,7 @@ def linear_beta_scheduler(max_epochs=None, target_val = 1):
     from 0 at epoch 0 to target_val at epoch max_epochs
     """
     def _helper(epoch):
+        return (epoch*target_val)/max_epochs
     return _helper
 
 def run_train_epoch(model, loss_mode, train_loader, optimizer, beta = 1, grad_clip = 1):
